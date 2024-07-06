@@ -122,14 +122,14 @@ if __name__ == '__main__':
                     {"Loss": (loss * (prev_loss + 1e-5)).cpu().detach().item(),
                      "Prev Loss:": prev_loss.cpu().detach().item()})
 
-        fig, axs = plt.subplots(1, 2)
-        axs[0].imshow(torchvision.transforms.ToPILImage()(canvases[0].cpu()))
-        axs[1].imshow(torchvision.transforms.ToPILImage()(target_imgs[0].cpu()))
-        fig.savefig("compare.png")
+            fig, axs = plt.subplots(1, 2)
+            axs[0].imshow(torchvision.transforms.ToPILImage()(canvases[0].cpu()))
+            axs[1].imshow(torchvision.transforms.ToPILImage()(target_imgs[0].cpu()))
+            fig.savefig("compare.png")
 
-        torch.save({
-            'epoch': e,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimiser.state_dict(),
-            'loss': loss,
-        }, f"{e}.pt")
+            torch.save({
+                'epoch': e,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimiser.state_dict(),
+                'loss': loss,
+            }, f"{e}.pt")
