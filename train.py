@@ -1,11 +1,13 @@
 import argparse
+
+import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm, trange
 
 from data import ReconDataset, generate_canvases
 from models import StrokePredictor
-from raster import SegmentRasteriser, composite_over, composite_over_alpha
+from raster import SegmentRasteriser, composite_over_alpha
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='TrainSketch')
@@ -20,7 +22,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-b', '--batch_size', type=int, default=10,
                         help='Number of canvases painted at once')
-    parser.add_argument('-p', '--prims', type=int, default=1,
+    parser.add_argument('-p', '--prims', type=int, default=5,
                         help="Number of primitives output on one run (one input).")
     parser.add_argument('-r', '--runs', type=int, default=1,
                         help="Number of runs in one update (draw how many times before backprop and update).")
@@ -35,7 +37,7 @@ if __name__ == '__main__':
     ################################################################################
     # Prepare Environ
 
-    torch.manual_seed(0)
+    torch.manual_seed(166)
 
     ################################################################################
     # Prepare Dataset
@@ -46,9 +48,10 @@ if __name__ == '__main__':
     ################################################################################
     # Prepare Model
 
-    device = torch.cuda.device(0) if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cpu'
 
-    model = StrokePredictor(latent_dim=args.latent_dims, hidden_dims=args.hidden_dims, in_channels=3 * 2,
+    model = StrokePredictor(latent_dim=args.latent_dims, hidden_dims=args.hidden_dims, in_channels=3 * 2 + 2,
                             prim_num=args.prims).to(device)
     rasteriser = SegmentRasteriser(args.img_dims).to(device)
     compositor = composite_over_alpha
@@ -70,49 +73,57 @@ if __name__ == '__main__':
     ################################################################################
     # Training
 
+    import torchvision
+
     canvases = None
     one_alphas = torch.ones([args.batch_size, 1, *args.img_dims]).to(device)
-
-    import matplotlib.pyplot as plt
-    import torchvision
+    pos_encoding = torch.stack(
+        torch.meshgrid(torch.linspace(0, 1, args.img_dims[0]), torch.linspace(0, 1, args.img_dims[1]), indexing='ij'))
+    pos_encoding = pos_encoding.view(1, *pos_encoding.shape).expand(args.batch_size, *pos_encoding.shape)
+    pos_encoding = pos_encoding.to(device)
 
     for e in range(args.epochs - epochs):
         for target_imgs in dataloader:
             canvases = generate_canvases(target_imgs, canvases)
 
-            plt.figure()
-            plt.imshow(torchvision.transforms.ToPILImage()(canvases[0]))
-            plt.waitforbuttonpress(1)
-
-            plt.figure()
-            plt.imshow(torchvision.transforms.ToPILImage()(target_imgs[0]))
-            plt.waitforbuttonpress(1)
+            target_imgs = target_imgs.to(device)
+            canvases = canvases.to(device)
 
             pbar = trange(args.updates, desc=f"Epoch {e}:")
             for u in pbar:
                 optimiser.zero_grad()
                 canvases = canvases.detach()
 
-                prev_loss = torch.nn.MSELoss()(canvases, target_imgs)
+                prev_loss = torch.nn.L1Loss()(canvases, target_imgs)
 
                 for r in range(args.runs):
-                    x = torch.cat([target_imgs, canvases], dim=1).to(device)
+                    x = torch.cat([target_imgs, canvases, pos_encoding], dim=1)
                     prims = model(x)
-                    layers = rasteriser(prims)
+                    layers = rasteriser(
+                        torch.cat([prims[:, :, :5], torch.ones([*prims.shape[:2], 1]).to(device)], dim=2))
+                    layers = torch.cat([
+                        prims[:, :, 5:].view(*prims.shape[:2], 3, 1, 1).expand(*prims.shape[:2], 3, *layers.shape[-2:]),
+                        layers], dim=2)
                     layers = torch.cat(
                         [layers,
-                         torch.cat([canvases, one_alphas], dim=1).view(
-                             [args.batch_size, 1, 4, *args.img_dims])],
+                         torch.cat([canvases, one_alphas], dim=1).view([args.batch_size, 1, 4, *args.img_dims])],
                         dim=1)
+
                     canvases = compositor(layers)
 
-                loss = torch.nn.MSELoss()(canvases, target_imgs)
-                loss = loss - prev_loss
+                loss = torch.nn.L1Loss()(canvases, target_imgs) / (prev_loss + 1e-5)
+                if torch.isnan(loss).any():
+                    raise RuntimeError("Help NAN!")
+
                 loss.backward()
                 optimiser.step()
 
-                pbar.set_postfix({"Loss": loss.detach().item()})
+                pbar.set_postfix(
+                    {"Loss": (loss * (prev_loss + 1e-5)).cpu().detach().item(),
+                     "Prev Loss:": prev_loss.cpu().detach().item()})
 
-            plt.figure()
-            plt.imshow(torchvision.transforms.ToPILImage()(canvases[0]))
+            fig, axs = plt.subplots(1, 2)
+            axs[0].imshow(torchvision.transforms.ToPILImage()(canvases[0].cpu()))
+            axs[1].imshow(torchvision.transforms.ToPILImage()(target_imgs[0].cpu()))
             plt.waitforbuttonpress(1)
+            plt.close()

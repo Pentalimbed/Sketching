@@ -1,9 +1,9 @@
 import torch
-from torch.nn import Conv2d, BatchNorm2d, ReLU, AdaptiveAvgPool2d, Flatten, Linear, Sequential, Tanh
+from torch.nn import Conv2d, BatchNorm2d, ReLU, AdaptiveAvgPool2d, Flatten, Linear, Sequential, Hardsigmoid
 
 
 class SegmentDecoder(torch.nn.Module):
-    def __init__(self, in_dims, n_channel=4, prim_num=1):
+    def __init__(self, in_dims, n_channel=3, prim_num=1):
         super().__init__()
 
         self.prim_num = prim_num
@@ -11,18 +11,18 @@ class SegmentDecoder(torch.nn.Module):
 
         self.block = Sequential(
             Linear(in_dims, prim_num * (5 + n_channel)),  # start, end, thickness, colour
-            Tanh())
+            Hardsigmoid())
 
     def forward(self, x):
         n = x.shape[0]
 
-        o = self.block(x) * 0.5 + 0.5
+        o = self.block(x)
         o = o.view(n, self.prim_num, 5 + self.n_channel)
         return o
 
 
 class StrokePredictor(torch.nn.Module):
-    def __init__(self, latent_dim=1024, hidden_dims=(64, 256), in_channels=6, n_channel=4, prim_num=1, prim_type='seg'):
+    def __init__(self, latent_dim=1024, hidden_dims=(64, 256), in_channels=6, n_channel=3, prim_num=1, prim_type='seg'):
         super().__init__()
 
         self.encoder = Sequential(
