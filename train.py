@@ -83,14 +83,14 @@ if __name__ == '__main__':
     pos_encoding = pos_encoding.to(device)
 
     for e in range(args.epochs - epochs):
-        for target_imgs in dataloader:
+        pbar = tqdm(dataloader, desc=f"Epoch {e}:")
+        for target_imgs in pbar:
             canvases = generate_canvases(target_imgs, canvases)
 
             target_imgs = target_imgs.to(device)
             canvases = canvases.to(device)
 
-            pbar = trange(args.updates, desc=f"Epoch {e}:")
-            for u in pbar:
+            for u in range(args.updates):
                 optimiser.zero_grad()
                 canvases = canvases.detach()
 
@@ -122,8 +122,14 @@ if __name__ == '__main__':
                     {"Loss": (loss * (prev_loss + 1e-5)).cpu().detach().item(),
                      "Prev Loss:": prev_loss.cpu().detach().item()})
 
-            fig, axs = plt.subplots(1, 2)
-            axs[0].imshow(torchvision.transforms.ToPILImage()(canvases[0].cpu()))
-            axs[1].imshow(torchvision.transforms.ToPILImage()(target_imgs[0].cpu()))
-            plt.waitforbuttonpress(1)
-            plt.close()
+        fig, axs = plt.subplots(1, 2)
+        axs[0].imshow(torchvision.transforms.ToPILImage()(canvases[0].cpu()))
+        axs[1].imshow(torchvision.transforms.ToPILImage()(target_imgs[0].cpu()))
+        fig.savefig("compare.png")
+
+        torch.save({
+            'epoch': e,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimiser.state_dict(),
+            'loss': loss,
+        }, f"{e}.pt")
