@@ -47,7 +47,7 @@ def generate_canvases(target_imgs: torch.Tensor, prev_canvases: Optional[torch.T
     # random pure colour
     canvases[:breakpoints[0]] = torch.rand([breakpoints[0], 3, 1, 1]).repeat([1, 1, *target_imgs.shape[2:]])
     # gaussian blur
-    canvases[breakpoints[0]:breakpoints[1]] = torchvision.transforms.GaussianBlur(kernel_size=31)(
+    canvases[breakpoints[0]:breakpoints[1]] = torchvision.transforms.GaussianBlur(kernel_size=63)(
         target_imgs[breakpoints[0]:breakpoints[1]])
     if prev_canvases is not None:
         # use last

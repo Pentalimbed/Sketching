@@ -15,7 +15,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--num_workers', type=int, default=4)
 
-    parser.add_argument('-d', '--img_dims', type=int, nargs=2, default=[256, 256],
+    parser.add_argument('-d', '--img_dims', type=int, nargs=2, default=[128, 128],
                         help='Height and width')
     parser.add_argument('--latent_dims', type=int, default=1024)
     parser.add_argument('--hidden_dims', type=int, nargs=2, default=[64, 256])
@@ -85,7 +85,10 @@ if __name__ == '__main__':
     for e in range(args.epochs - epochs):
         pbar = tqdm(dataloader, desc=f"Epoch {e}:")
         for target_imgs in pbar:
+            display_idx = torch.randint(0, args.batch_size, [1]).flatten().item()
+
             canvases = generate_canvases(target_imgs, canvases)
+            display_old_canvas = canvases[display_idx]
 
             target_imgs = target_imgs.to(device)
             canvases = canvases.to(device)
@@ -94,6 +97,7 @@ if __name__ == '__main__':
                 optimiser.zero_grad()
                 canvases = canvases.detach()
 
+                prev_canvases = canvases.clone()
                 prev_loss = torch.nn.L1Loss()(canvases, target_imgs)
 
                 for r in range(args.runs):
@@ -114,22 +118,27 @@ if __name__ == '__main__':
                 loss = torch.nn.L1Loss()(canvases, target_imgs) / (prev_loss + 1e-5)
                 if torch.isnan(loss).any():
                     raise RuntimeError("Help NAN!")
+                diff_loss = -torch.nn.L1Loss()(canvases, prev_canvases)
 
-                loss.backward()
+                (loss + diff_loss).backward()
                 optimiser.step()
 
                 pbar.set_postfix(
                     {"Loss": (loss * (prev_loss + 1e-5)).cpu().detach().item(),
+                     "Diff Loss": diff_loss.cpu().detach().item(),
                      "Prev Loss:": prev_loss.cpu().detach().item()})
 
-            fig, axs = plt.subplots(1, 2)
-            axs[0].imshow(torchvision.transforms.ToPILImage()(canvases[0].cpu()))
-            axs[1].imshow(torchvision.transforms.ToPILImage()(target_imgs[0].cpu()))
-            fig.savefig("compare.png")
+            fig, axs = plt.subplots(1, 3)
+            axs[0].imshow(torchvision.transforms.ToPILImage()(display_old_canvas))
+            axs[1].imshow(torchvision.transforms.ToPILImage()(canvases[display_idx].cpu()))
+            axs[2].imshow(torchvision.transforms.ToPILImage()(target_imgs[display_idx].cpu()))
+            fig.tight_layout()
+            fig.savefig("outputs/compare.png")
+            plt.close(fig)
 
             torch.save({
                 'epoch': e,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimiser.state_dict(),
                 'loss': loss,
-            }, f"{e}.pt")
+            }, f"outputs/{e}.pt")

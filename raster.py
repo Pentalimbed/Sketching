@@ -22,7 +22,7 @@ class SegmentRasteriser(torch.nn.Module):
     def forward(self, x):
         start = x[:, :, :2] * self.dims.view(1, 1, 2)
         end = x[:, :, 2:4] * self.dims.view(1, 1, 2)
-        thickness = x[:, :, [4]] * torch.max(self.dims.view(1, 1, 2)) * 0.2
+        thickness = x[:, :, [4]] * torch.max(self.dims) * 0.2
         colour = x[:, :, 5:]
 
         start = start.view(*start.shape, 1, 1)
