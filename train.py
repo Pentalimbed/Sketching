@@ -15,10 +15,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--num_workers', type=int, default=4)
 
-    parser.add_argument('-d', '--img_dims', type=int, nargs=2, default=[128, 128],
+    parser.add_argument('-d', '--img_dims', type=int, nargs=2, default=[256, 256],
                         help='Height and width')
-    parser.add_argument('--latent_dims', type=int, default=1024)
-    parser.add_argument('--hidden_dims', type=int, nargs=2, default=[64, 256])
+    parser.add_argument('--hidden_dims', type=int, nargs=2, default=[256, 128])
 
     parser.add_argument('-b', '--batch_size', type=int, default=10,
                         help='Number of canvases painted at once')
@@ -51,8 +50,7 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # device = 'cpu'
 
-    model = StrokePredictor(latent_dim=args.latent_dims, hidden_dims=args.hidden_dims, in_channels=3 * 2 + 2,
-                            prim_num=args.prims).to(device)
+    model = StrokePredictor(hidden_dims=args.hidden_dims, in_channels=3 * 2 + 2, prim_num=args.prims).to(device)
     rasteriser = SegmentRasteriser(args.img_dims).to(device)
     compositor = composite_over_alpha
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -83,7 +81,7 @@ if __name__ == '__main__':
     pos_encoding = pos_encoding.to(device)
 
     for e in range(args.epochs - epochs):
-        pbar = tqdm(dataloader, desc=f"Epoch {e}:")
+        pbar = tqdm(dataloader, desc=f"Epoch {e}:", position=0)
         for target_imgs in pbar:
             display_idx = torch.randint(0, args.batch_size, [1]).flatten().item()
 
@@ -104,7 +102,7 @@ if __name__ == '__main__':
                     x = torch.cat([target_imgs, canvases, pos_encoding], dim=1)
                     prims = model(x)
                     layers = rasteriser(
-                        torch.cat([prims[:, :, :5], torch.ones([*prims.shape[:2], 1]).to(device)], dim=2))
+                        torch.cat([prims[:, :, :5], torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
                     layers = torch.cat([
                         prims[:, :, 5:].view(*prims.shape[:2], 3, 1, 1).expand(*prims.shape[:2], 3, *layers.shape[-2:]),
                         layers], dim=2)
