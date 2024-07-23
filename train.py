@@ -4,10 +4,11 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm, trange
+import lpips
 
 from data import ReconDataset, generate_canvases
 from models import StrokePredictor
-from raster import SegmentRasteriser, composite_over_alpha
+from raster import SegmentRasteriser, composite_over_alpha, composite_softor
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='TrainSketch')
@@ -18,8 +19,10 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--img_dims', type=int, nargs=2, default=[256, 256],
                         help='Height and width')
     parser.add_argument('--hidden_dims', type=int, nargs=2, default=[256, 128])
+    parser.add_argument('--colour', action=argparse.BooleanOptionalAction)
+    parser.add_argument('--thickness', action=argparse.BooleanOptionalAction)
 
-    parser.add_argument('-b', '--batch_size', type=int, default=10,
+    parser.add_argument('-b', '--batch_size', type=int, default=50,
                         help='Number of canvases painted at once')
     parser.add_argument('-p', '--prims', type=int, default=5,
                         help="Number of primitives output on one run (one input).")
@@ -32,6 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001)
 
     args = parser.parse_args()
+    n_channels = 3 if args.colour else 1
 
     ################################################################################
     # Prepare Environ
@@ -50,10 +54,13 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # device = 'cpu'
 
-    model = StrokePredictor(hidden_dims=args.hidden_dims, in_channels=3 * 2 + 2, prim_num=args.prims).to(device)
+    model = StrokePredictor(hidden_dims=args.hidden_dims, in_channels=n_channels * 2 + 2, prim_num=args.prims).to(
+        device)
     rasteriser = SegmentRasteriser(args.img_dims).to(device)
     compositor = composite_over_alpha
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # loss_fn = lpips.LPIPS(net='vgg').to(device)
+    loss_fn = torch.nn.L1Loss()
 
     epochs = 0
     loss = torch.tensor(0)
@@ -80,12 +87,55 @@ if __name__ == '__main__':
     pos_encoding = pos_encoding.view(1, *pos_encoding.shape).expand(args.batch_size, *pos_encoding.shape)
     pos_encoding = pos_encoding.to(device)
 
+    # target = dataset[192].to(device)
+    # if not args.colour:
+    #     target = torchvision.transforms.Grayscale()(target)
+    #
+    # img = torchvision.transforms.ToPILImage()(target)
+    # img.save(f"outputs/target.png", format=None)
+    #
+    # prims = torch.rand([1, 200, 5 + n_channels], device=device)
+    # centres = (prims[:, :, :2] + prims[:, :, 2:4]).repeat(1, 1, 2) * 0.5
+    # prims[:, :, :4] = centres + (prims[:, :, :4] - centres) * 0.2
+    # prims.requires_grad_(True)
+    # prims_optim = torch.optim.Adam([prims], lr=0.01)
+    #
+    # canvases = torch.ones([1, n_channels, *args.img_dims], device=device)
+    # pbar = trange(1000)
+    # for i in pbar:
+    #     prims.data.clamp_(0, 1)
+    #     prims.grad = None
+    #     prims_optim.zero_grad()
+    #
+    #     layers = rasteriser(
+    #         torch.cat([prims[:, :, :5], torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
+    #     layers = torch.cat([prims[:, :, 5:]
+    #                        .view(*prims.shape[:2], n_channels, 1, 1)
+    #                        .expand(*prims.shape[:2], n_channels, *layers.shape[-2:]),
+    #                         layers], dim=2)
+    #     layers = torch.cat(
+    #         [layers,
+    #          torch.cat([canvases, one_alphas], dim=1).view([args.batch_size, 1, n_channels + 1, *args.img_dims])],
+    #         dim=1)
+    #
+    #     new_canvases = compositor(layers)
+    #
+    #     loss = loss_fn(new_canvases, target.unsqueeze(0))
+    #     loss.backward()
+    #     prims_optim.step()
+    #
+    #     pbar.set_postfix({"Loss": loss.detach().cpu().item()})
+    #
+    #     if i % 100 == 0:
+    #         img = torchvision.transforms.ToPILImage()(new_canvases[0])
+    #         img.save(f"outputs/{i}.png", format=None)
+
     for e in range(args.epochs - epochs):
         pbar = tqdm(dataloader, desc=f"Epoch {e}:", position=0)
         for target_imgs in pbar:
             display_idx = torch.randint(0, args.batch_size, [1]).flatten().item()
 
-            canvases = generate_canvases(target_imgs, canvases)
+            canvases = generate_canvases(target_imgs)
             display_old_canvas = canvases[display_idx]
 
             target_imgs = target_imgs.to(device)
@@ -95,36 +145,29 @@ if __name__ == '__main__':
                 optimiser.zero_grad()
                 canvases = canvases.detach()
 
-                prev_canvases = canvases.clone()
-                prev_loss = torch.nn.L1Loss()(canvases, target_imgs)
-
                 for r in range(args.runs):
                     x = torch.cat([target_imgs, canvases, pos_encoding], dim=1)
                     prims = model(x)
                     layers = rasteriser(
-                        torch.cat([prims[:, :, :5], torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
+                        torch.cat([prims[:, :, :4], torch.ones([*prims.shape[:2], 2], device=device)], dim=2))
                     layers = torch.cat([
-                        prims[:, :, 5:].view(*prims.shape[:2], 3, 1, 1).expand(*prims.shape[:2], 3, *layers.shape[-2:]),
+                        prims[:, :, 4:].view(*prims.shape[:2], n_channels, 1, 1).expand(*prims.shape[:2], n_channels, *layers.shape[-2:]),
                         layers], dim=2)
                     layers = torch.cat(
                         [layers,
-                         torch.cat([canvases, one_alphas], dim=1).view([args.batch_size, 1, 4, *args.img_dims])],
+                         torch.cat([canvases, one_alphas], dim=1).view([args.batch_size, 1, n_channels + 1, *args.img_dims])],
                         dim=1)
 
                     canvases = compositor(layers)
 
-                loss = torch.nn.L1Loss()(canvases, target_imgs) / (prev_loss + 1e-5)
+                loss = loss_fn(canvases * 2 - 1, target_imgs * 2 - 1).mean()
                 if torch.isnan(loss).any():
                     raise RuntimeError("Help NAN!")
-                diff_loss = -torch.nn.L1Loss()(canvases, prev_canvases)
 
-                (loss + diff_loss).backward()
+                loss.backward()
                 optimiser.step()
 
-                pbar.set_postfix(
-                    {"Loss": (loss * (prev_loss + 1e-5)).cpu().detach().item(),
-                     "Diff Loss": diff_loss.cpu().detach().item(),
-                     "Prev Loss:": prev_loss.cpu().detach().item()})
+                pbar.set_postfix({"Loss": loss.cpu().detach().item()})
 
             fig, axs = plt.subplots(1, 3)
             axs[0].imshow(torchvision.transforms.ToPILImage()(display_old_canvas))

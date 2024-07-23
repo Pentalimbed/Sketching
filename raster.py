@@ -19,20 +19,24 @@ class SegmentRasteriser(torch.nn.Module):
 
         return super().to(device)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         start = x[:, :, :2] * self.dims.view(1, 1, 2)
         end = x[:, :, 2:4] * self.dims.view(1, 1, 2)
-        thickness = x[:, :, [4]] * torch.max(self.dims) * 0.05
+        thickness = torch.lerp(torch.tensor(1.0, device=x.device), torch.max(self.dims) * 0.5, x[:, :, [4]])
         colour = x[:, :, 5:]
 
         start = start.view(*start.shape, 1, 1)
         end = end.view(*end.shape, 1, 1)
         m = end - start
 
-        t = torch.norm((self.pos - start) * m, dim=2, keepdim=True) / (torch.norm(m * m, dim=2, keepdim=True) + torch.finfo().eps)
-        d = ((t <= 0) * torch.norm(self.pos - start, dim=2, keepdim=True) +
-                 (t > 0) * (t < 1) * torch.norm(self.pos - (start + t * m), dim=2, keepdim=True) +
-                 (t >= 1) * torch.norm(self.pos - end, dim=2, keepdim=True))
+        ps = self.pos - start
+        pe = self.pos - end
+
+        t = torch.sum(ps * m, dim=2, keepdim=True) / (torch.sum(m * m, dim=2, keepdim=True) + torch.finfo().eps)
+        patm = self.pos - (start + t * m)
+        d = ((t <= 0) * torch.sum(ps * ps, dim=2, keepdim=True) +
+             (t > 0) * (t < 1) * torch.sum(patm * patm, dim=2, keepdim=True) +
+             (t >= 1) * torch.sum(pe * pe, dim=2, keepdim=True))
 
         thickness = thickness.view(*thickness.shape, 1, 1)
         if self.inference:
@@ -42,6 +46,14 @@ class SegmentRasteriser(torch.nn.Module):
             canvas = torch.exp(-d * d / (sigma * sigma + torch.finfo().eps))
 
         return canvas * colour.view(*colour.shape, 1, 1)
+
+
+def _composite_softor(imgs: torch.Tensor) -> torch.Tensor:
+    linv = 1 - imgs
+    return 1 - torch.prod(linv, dim=0)
+
+
+composite_softor = torch.vmap(_composite_softor)
 
 
 def _composite_over(imgs: torch.Tensor) -> torch.Tensor:

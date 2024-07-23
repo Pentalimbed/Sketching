@@ -11,14 +11,14 @@ class SegmentDecoder(torch.nn.Module):
         self.n_channel = n_channel
 
         self.block = Sequential(
-            Linear(in_dims, prim_num * (5 + n_channel)),  # start, end, thickness, colour
+            Linear(in_dims, prim_num * (4 + n_channel)),  # start, end, thickness, colour
             Hardsigmoid())
 
     def forward(self, x):
         n = x.shape[0]
 
         o = self.block(x)
-        o = o.view(n, self.prim_num, 5 + self.n_channel)
+        o = o.view(n, self.prim_num, 4 + self.n_channel)
         return o
 
 
