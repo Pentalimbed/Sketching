@@ -1,8 +1,34 @@
+from typing import Any, Tuple
+
 import torch
 
 
+class DistanceRasterStraightThrough(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, d, thickness):
+        ctx.save_for_backward(d, thickness)
+        return (d * d < thickness * thickness * 0.25).float()
+
+        # sigma = 0.54925 * thickness
+        # return torch.exp(-d * d / (sigma * sigma + torch.finfo().eps)).detach()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        d, thickness = ctx.saved_tensors
+        d = d.detach().requires_grad_()
+        thickness = thickness.detach().requires_grad_()
+
+        sigma = 0.54925 * thickness
+        denum = sigma * sigma + torch.finfo().eps
+        forward_func = torch.exp(-d * d / denum)
+        grad_d = -2 * d * forward_func / denum
+        grad_thickness = 2 * 0.54925 * 0.54925 * d * d * thickness * forward_func / (denum * denum)
+
+        return grad_output * grad_d, grad_output * grad_thickness
+
+
 class SegmentRasteriser(torch.nn.Module):
-    def __init__(self, dims, inference=False):
+    def __init__(self, dims, straight_through=False):
         super().__init__()
 
         self.dims = torch.tensor(dims)
@@ -10,7 +36,7 @@ class SegmentRasteriser(torch.nn.Module):
         self.pos = torch.stack(torch.meshgrid(torch.arange(dims[0]), torch.arange(dims[1]), indexing='ij'))
         self.pos = self.pos.view(1, *self.pos.shape)
 
-        self.inference = inference
+        self.straight_through = straight_through
 
     def to(self, device):
         # it doesn't auto convert
@@ -39,8 +65,9 @@ class SegmentRasteriser(torch.nn.Module):
              (t >= 1) * torch.sum(pe * pe, dim=2, keepdim=True))
 
         thickness = thickness.view(*thickness.shape, 1, 1)
-        if self.inference:
-            canvas = d * d < thickness * thickness * 0.25
+        if self.straight_through:
+            raster = DistanceRasterStraightThrough.apply
+            canvas = raster(d, thickness)
         else:
             sigma = 0.54925 * thickness
             canvas = torch.exp(-d * d / (sigma * sigma + torch.finfo().eps))
