@@ -9,14 +9,14 @@ class DistanceRasterStraightThrough(torch.autograd.Function):
         ctx.save_for_backward(d, thickness)
         return (d * d < thickness * thickness * 0.25).float()
 
-        # sigma = 0.54925 * thickness
-        # return torch.exp(-d * d / (sigma * sigma + torch.finfo().eps)).detach()
-
     @staticmethod
     def backward(ctx, grad_output):
         d, thickness = ctx.saved_tensors
         d = d.detach().requires_grad_()
         thickness = thickness.detach().requires_grad_()
+
+        # mult
+        thickness = thickness * 1.1
 
         sigma = 0.54925 * thickness
         denum = sigma * sigma + torch.finfo().eps
