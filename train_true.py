@@ -203,9 +203,9 @@ if __name__ == '__main__':
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
                                  enable_prims=False, sigma=0, steps=10),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
-                                 thickness_range=(0.2, 1.0)),
+                                 thickness_range=(0.2, 1.0), sigma=0.5),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
-                                 thickness_range=(0.05, 0.2)),
+                                 thickness_range=(0.05, 0.2), sigma=0.4),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
                                  thickness_range=(0.01, 0.05)),
                     (prims.detach(), colours.detach(), scores.detach(), new_canvases.detach())
