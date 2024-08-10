@@ -16,7 +16,7 @@ def raw_optimise(
         canvases: torch.Tensor, target: torch.Tensor,
         initial_prims: torch.Tensor, initial_colours: torch.Tensor,
         score_fn: Callable = torch.nn.L1Loss(), prims_loss_fn: Callable = torch.nn.MSELoss(), colours_loss_fn=None,
-        steps=40, enable_prims=True, enable_colour=True, sigma=0.1,
+        steps=50, enable_prims=True, enable_colour=True, sigma=0.2,
         thickness_range=(0.0, 1.0)):
     batch_size = canvases.shape[0]
     n_channels = canvases.shape[1]
@@ -36,7 +36,7 @@ def raw_optimise(
     if enable_prims:
         prims_optim = torch.optim.Adam([prims], lr=0.02)
     if enable_colour:
-        colour_optim = torch.optim.Adam([colours], lr=0.02)
+        colour_optim = torch.optim.Adam([colours], lr=0.1)
 
     for j in range(steps):
         if enable_prims:
@@ -136,7 +136,7 @@ if __name__ == '__main__':
     compositor = composite_over_alpha
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = torch.nn.MSELoss()
-    score_fn = lambda x, x_target: torch.norm((x - x_target).flatten(1), p=0.5, dim=1).sum() / torch.numel(x)
+    score_fn = torch.nn.MSELoss()
     completeness_fn = torch.nn.L1Loss()
     optimse_fn = score_fn
 
@@ -203,11 +203,7 @@ if __name__ == '__main__':
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
                                  enable_prims=False, sigma=0, steps=10),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
-                                 enable_colour=False, steps=10),
-                    raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
-                                 thickness_range=(0.5, 1.0)),
-                    raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
-                                 thickness_range=(0.2, 5.0)),
+                                 thickness_range=(0.2, 1.0)),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
                                  thickness_range=(0.05, 0.2)),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
@@ -237,14 +233,13 @@ if __name__ == '__main__':
                                   "Loss": loss.cpu().detach().item(),
                                   "Completeness": completeness.cpu().detach().item()})
 
-                if u in [0, args.updates // 2, args.updates - 1]:
-                    fig, axs = plt.subplots(1, 3)
-                    axs[0].imshow(torchvision.transforms.ToPILImage()(display_old_canvas))
-                    axs[1].imshow(torchvision.transforms.ToPILImage()(canvases[display_idx].cpu()))
-                    axs[2].imshow(torchvision.transforms.ToPILImage()(target_imgs[display_idx].cpu()))
-                    fig.tight_layout()
-                    fig.savefig("outputs/compare.png")
-                    plt.close(fig)
+                fig, axs = plt.subplots(1, 3)
+                axs[0].imshow(torchvision.transforms.ToPILImage()(display_old_canvas))
+                axs[1].imshow(torchvision.transforms.ToPILImage()(canvases[display_idx].cpu()))
+                axs[2].imshow(torchvision.transforms.ToPILImage()(target_imgs[display_idx].cpu()))
+                fig.tight_layout()
+                fig.savefig("outputs/compare.png")
+                plt.close(fig)
 
             loss_curve.append(loss)
             completeness_curve.append(completeness)
