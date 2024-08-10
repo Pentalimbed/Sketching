@@ -186,18 +186,19 @@ if __name__ == '__main__':
                 x = torch.cat([target_imgs, canvases, pos_encoding], dim=1)
                 prims, colours = model(x)
 
-                layers = rasteriser(torch.cat([prims, torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
-                layers = torch.cat([
-                    colours.view(*colours.shape[:2], n_channels, 1, 1)
-                    .expand(*colours.shape[:2], n_channels, *layers.shape[-2:]),
-                    layers], dim=2)
-                layers = torch.cat([layers,
-                                    torch.cat([canvases, one_alphas], dim=1)
-                                   .view([args.batch_size, 1, n_channels + 1, *args.img_dims])], dim=1)
+                with torch.no_grad():
+                    layers = rasteriser(torch.cat([prims, torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
+                    layers = torch.cat([
+                        colours.view(*colours.shape[:2], n_channels, 1, 1)
+                        .expand(*colours.shape[:2], n_channels, *layers.shape[-2:]),
+                        layers], dim=2)
+                    layers = torch.cat([layers,
+                                        torch.cat([canvases, one_alphas], dim=1)
+                                       .view([args.batch_size, 1, n_channels + 1, *args.img_dims])], dim=1)
 
-                new_canvases = compositor(layers)
-                scores = torch.tensor([score_fn(new_canvases[i], target_imgs[i]) for i in range(args.batch_size)],
-                                      device=device)
+                    new_canvases = compositor(layers)
+                    scores = torch.tensor([score_fn(new_canvases[i], target_imgs[i]) for i in range(args.batch_size)],
+                                          device=device)
 
                 candidates = [
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
