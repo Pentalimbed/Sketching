@@ -23,7 +23,7 @@ def raw_optimise(
     img_dims = canvases.shape[2:]
     device = canvases.device
 
-    rasteriser = SegmentRasteriser(img_dims, thickness_range, False)
+    rasteriser = SegmentRasteriser(img_dims, thickness_range, straight_through=True)
     rasteriser.to(device)
 
     one_alphas = torch.ones([batch_size, 1, *img_dims]).to(device)
@@ -132,7 +132,7 @@ if __name__ == '__main__':
         hidden_dims=args.hidden_dims,
         in_channels=n_channels * 2 + 2,
         prim_num=args.prims).to(device)
-    rasteriser = SegmentRasteriser(args.img_dims, straight_through=False).to(device)
+    rasteriser = SegmentRasteriser(args.img_dims, straight_through=True).to(device)
     compositor = composite_over_alpha
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = torch.nn.MSELoss()
