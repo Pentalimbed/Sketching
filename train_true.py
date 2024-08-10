@@ -201,7 +201,7 @@ if __name__ == '__main__':
 
                 candidates = [
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
-                                 enable_prims=False),
+                                 enable_prims=False, sigma=0, steps=10),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
                                  enable_colour=False, steps=10),
                     raw_optimise(canvases, target_imgs, prims, colours, prims_loss_fn=optimse_fn, score_fn=score_fn,
