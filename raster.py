@@ -5,33 +5,35 @@ import torch
 
 class DistanceRasterStraightThrough(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, d, thickness):
-        ctx.save_for_backward(d, thickness)
-        return (d * d < thickness * thickness * 0.25).float()
+    def forward(ctx, d2, thickness):
+        ctx.save_for_backward(d2, thickness)
+        return (d2 < thickness * thickness * 0.25).float()
 
     @staticmethod
     def backward(ctx, grad_output):
-        d, thickness = ctx.saved_tensors
-        d = d.detach().requires_grad_()
+        d2, thickness = ctx.saved_tensors
+        d2 = d2.detach().requires_grad_()
         thickness = thickness.detach().requires_grad_()
 
         # mult
-        thickness = thickness * 1.1
+        # thickness = thickness * 2
 
         sigma = 0.54925 * thickness
         denum = sigma * sigma + torch.finfo().eps
-        forward_func = torch.exp(-d * d / denum)
-        grad_d = -2 * d * forward_func / denum
-        grad_thickness = 2 * 0.54925 * 0.54925 * d * d * thickness * forward_func / (denum * denum)
+        forward_func = torch.exp(-d2 / denum)
+
+        grad_d = -forward_func / denum
+        grad_thickness = 2 * 0.54925 * 0.54925 * d2 * thickness * forward_func / (denum * denum)
 
         return grad_output * grad_d, grad_output * grad_thickness
 
 
 class SegmentRasteriser(torch.nn.Module):
-    def __init__(self, dims, straight_through=False):
+    def __init__(self, dims, thickness_range=(0.0, 1.0), straight_through=False):
         super().__init__()
 
         self.dims = torch.tensor(dims)
+        self.thickness_range = thickness_range
 
         self.pos = torch.stack(torch.meshgrid(torch.arange(dims[0]), torch.arange(dims[1]), indexing='ij'))
         self.pos = self.pos.view(1, *self.pos.shape)
@@ -40,15 +42,19 @@ class SegmentRasteriser(torch.nn.Module):
 
     def to(self, device):
         # it doesn't auto convert
-        self.dims = self.dims.to(device)
-        self.pos = self.pos.to(device)
+        retval = super().to(device)
+        retval.dims = self.dims.to(device)
+        retval.pos = self.pos.to(device)
 
-        return super().to(device)
+        return retval
 
     def forward(self, x: torch.Tensor):
         start = x[:, :, :2] * self.dims.view(1, 1, 2)
         end = x[:, :, 2:4] * self.dims.view(1, 1, 2)
-        thickness = torch.lerp(torch.tensor(1.0, device=x.device), torch.max(self.dims) * 0.5, x[:, :, [4]])
+        thickness = torch.lerp(
+            torch.tensor(max(1.0, self.thickness_range[1]), device=x.device),
+            torch.max(self.dims).float() * self.thickness_range[1],
+            x[:, :, [4]])
         colour = x[:, :, 5:]
 
         start = start.view(*start.shape, 1, 1)
@@ -60,17 +66,17 @@ class SegmentRasteriser(torch.nn.Module):
 
         t = torch.sum(ps * m, dim=2, keepdim=True) / (torch.sum(m * m, dim=2, keepdim=True) + torch.finfo().eps)
         patm = self.pos - (start + t * m)
-        d = ((t <= 0) * torch.sum(ps * ps, dim=2, keepdim=True) +
-             (t > 0) * (t < 1) * torch.sum(patm * patm, dim=2, keepdim=True) +
-             (t >= 1) * torch.sum(pe * pe, dim=2, keepdim=True))
+        d2 = ((t <= 0) * torch.sum(ps * ps, dim=2, keepdim=True) +
+              (t > 0) * (t < 1) * torch.sum(patm * patm, dim=2, keepdim=True) +
+              (t >= 1) * torch.sum(pe * pe, dim=2, keepdim=True))
 
         thickness = thickness.view(*thickness.shape, 1, 1)
         if self.straight_through:
             raster = DistanceRasterStraightThrough.apply
-            canvas = raster(d, thickness)
+            canvas = raster(d2, thickness)
         else:
             sigma = 0.54925 * thickness
-            canvas = torch.exp(-d * d / (sigma * sigma + torch.finfo().eps))
+            canvas = torch.exp(-d2 / (sigma * sigma + torch.finfo().eps))
 
         return canvas * colour.view(*colour.shape, 1, 1)
 

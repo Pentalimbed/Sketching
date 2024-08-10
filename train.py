@@ -8,7 +8,7 @@ import lpips
 
 from data import ReconDataset, generate_canvases
 from models import StrokePredictor
-from raster import SegmentRasteriser, composite_over_alpha, composite_softor
+from raster import SegmentRasteriser, composite_over_alpha, composite_softor, composite_over
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='TrainSketch')
@@ -20,7 +20,6 @@ if __name__ == '__main__':
                         help='Height and width')
     parser.add_argument('--hidden_dims', type=int, nargs=2, default=[256, 128])
     parser.add_argument('--colour', action=argparse.BooleanOptionalAction)
-    parser.add_argument('--thickness', action=argparse.BooleanOptionalAction)
 
     parser.add_argument('-b', '--batch_size', type=int, default=1,
                         help='Number of canvases painted at once')
@@ -56,13 +55,12 @@ if __name__ == '__main__':
 
     model = StrokePredictor(hidden_dims=args.hidden_dims, in_channels=n_channels * 2 + 2, prim_num=args.prims).to(
         device)
-    rasteriser = SegmentRasteriser(args.img_dims, straight_through=True).to(device)
+    rasteriser = SegmentRasteriser(args.img_dims, straight_through=False).to(device)
     compositor = composite_over_alpha
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
-    loss_fn = lpips.LPIPS(net='vgg').to(device)
-    # loss_fn = torch.nn.SmoothL1Loss()
-    # loss_fn = lambda x, x_target: torch.pow(torch.norm((x - x_target).flatten(1), p=4, dim=1).sum() / torch.numel(x),
-    #                                         1 / 4.0)
+    prims_loss_fn = torch.nn.SmoothL1Loss()
+    # colour_loss_fn = lambda x, x_target: torch.norm((x - x_target).flatten(1), p=0.5, dim=1).sum() / torch.numel(x)
+    colour_loss_fn = torch.nn.SmoothL1Loss()
 
     epochs = 0
     loss = torch.tensor(0)
@@ -101,27 +99,45 @@ if __name__ == '__main__':
     canvases = torch.ones([1, n_channels, *args.img_dims], device=device)
     pbar = trange(args.updates)
     for i in pbar:
-        prims = torch.rand([1, args.prims, 5 + n_channels], device=device)
+        prims = torch.rand([1, args.prims, 5], device=device)
         centres = (prims[:, :, :2] + prims[:, :, 2:4]).repeat(1, 1, 2) * 0.5
         prims[:, :, :4] = centres + (prims[:, :, :4] - centres) * 0.2
         prims.requires_grad_(True)
-        prims_optim = torch.optim.Adam([prims], lr=0.01)
 
-        for j in range(100):
+        colours = torch.rand([1, args.prims, n_channels], device=device)
+        colours.requires_grad_(True)
+
+        prims_optim = torch.optim.Adam([prims, colours], lr=0.01)
+        # colour_optim = torch.optim.Adam([colours], lr=0.1)
+
+        # completeness = torch.nn.L1Loss()(canvases, target.unsqueeze(0))
+
+        for j in range(200):
             # with torch.no_grad():
             #     centres = (prims[:, :, :2] + prims[:, :, 2:4]).repeat(1, 1, 2) * 0.5
             #     lengths = torch.norm(prims[:, :, :2] - prims[:, :, 2:4], dim=2, keepdim=True) + torch.finfo().eps
             #     prims[:, :, :4] = centres + (prims[:, :, :4] - centres) * torch.minimum(lengths, length_limit) / lengths
 
             prims.data.clamp_(0, 1)
+            with torch.no_grad():
+                prims[:, :, 4] = prims[:, :, 4].clamp_max(
+                    torch.lerp(torch.tensor(1.0, device=device), torch.tensor(0.01, device=device),
+                               torch.pow(torch.tensor(i / (args.updates - 1), device=device), 0.5)))
             prims.grad = None
             prims_optim.zero_grad()
 
+            colours.data.clamp_(0, 1)
+            colours.grad = None
+            # colour_optim.zero_grad()
+
             layers = rasteriser(
-                torch.cat([prims[:, :, :5], torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
-            layers = torch.cat([prims[:, :, 5:]
-                               .view(*prims.shape[:2], n_channels, 1, 1)
-                               .expand(*prims.shape[:2], n_channels, *layers.shape[-2:]),
+                torch.cat([prims, torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
+
+            # influences = torch.cat([layers, torch.zeros([args.batch_size, 1, 1, *args.img_dims], device=device)], dim=1)
+            # influences = composite_over(influences)
+
+            layers = torch.cat([colours.view(*colours.shape[:2], n_channels, 1, 1)
+                               .expand(*colours.shape[:2], n_channels, *layers.shape[-2:]),
                                 layers], dim=2)
             layers = torch.cat(
                 [layers,
@@ -130,12 +146,35 @@ if __name__ == '__main__':
 
             new_canvases = compositor(layers)
 
-            loss = loss_fn(new_canvases, target.unsqueeze(0))
-            loss.backward()
+            err = target.unsqueeze(0) - new_canvases
+
+            # colour_loss = prims_loss_fn(err, torch.zeros_like(err))
+            # loss = colour_loss.clone()
+
+            # oppo_cost = torch.nn.L1Loss()(err * (1 - influences), torch.zeros_like(err))
+            # change = torch.nn.L1Loss()(new_canvases, canvases).detach().item()
+            # small_change_penalty = (1.0 - min(1.0, change / (completeness * 0.01))) * oppo_cost * 0.5
+            # loss = colour_loss + small_change_penalty
+
+            loss = prims_loss_fn(new_canvases, target.unsqueeze(0))
+            # colour_loss = colour_loss_fn(new_canvases, target.unsqueeze(0))
+
+            # colours.requires_grad_(False)
+            loss.backward(retain_graph=False)
             prims_optim.step()
 
+            # colours.requires_grad_(True)
+            # prims.requires_grad_(False)
+            # colour_loss.backward()
+            # colour_optim.step()
+            # prims.requires_grad_(True)
+
+            # if i in [0, 20, 100, 200, 400, 799] and (j % 20 == 0 or j == 199):
+            #     img = torchvision.transforms.ToPILImage()(new_canvases[0])
+            #     img.save(f"outputs/{i}-move{j}.png", format=None)
+
         canvases = new_canvases.detach()
-        pbar.set_postfix({"Loss": loss.detach().cpu().item()})
+        pbar.set_postfix({"loss": loss.detach().cpu().item()})
 
         if i % (args.updates // 10) == 0 or i == args.updates - 1:
             img = torchvision.transforms.ToPILImage()(new_canvases[0])
