@@ -82,12 +82,9 @@ def raw_optimise(
             if enable_prims:
                 prims.requires_grad_(True)
 
-    prims.requires_grad_(False)
-    colours.requires_grad_(False)
-
     with torch.no_grad():
         scores = torch.tensor([score_fn(target[i], new_canvases[i]) for i in range(batch_size)], device=device)
-    return prims, colours, scores, new_canvases
+    return prims.detach(), colours.detach(), scores, new_canvases.detach()
 
 
 if __name__ == '__main__':
