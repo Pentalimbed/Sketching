@@ -233,7 +233,7 @@ if __name__ == '__main__':
                 with torch.no_grad():
                     completeness = completeness_fn(canvases, target_imgs)
 
-                pbar.set_postfix({"Progress": f"{u}/{args.update}",
+                pbar.set_postfix({"Progress": f"{u}/{args.updates}",
                                   "Loss": loss.cpu().detach().item(),
                                   "Completeness": completeness.cpu().detach().item()})
 
