@@ -104,7 +104,7 @@ if __name__ == '__main__':
 
             optimizer = torch.optim.Adam([prims, colours], lr=0.02)
 
-            for j in range(200):
+            for j in range(100):
                 prims.data.clamp_(0, 1)
                 prims.grad = None
                 optimizer.zero_grad()
@@ -126,7 +126,7 @@ if __name__ == '__main__':
                 loss.backward()
                 optimizer.step()
 
-                if (u % (args.updates // 10) == 0 or u == args.updates - 1) and (j % 20 == 0 or j == 199):
+                if (u % (args.updates // 10) == 0 or u == args.updates - 1) and (j % 10 == 0 or j == 99):
                     img = torchvision.transforms.ToPILImage()(new_canvases[0])
                     img.save(os.path.join(args.output, f"{u}-move{j}.png"), format=None)
 
