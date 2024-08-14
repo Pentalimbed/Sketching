@@ -13,6 +13,7 @@ from raster import SegmentRasteriser, composite_over_alpha, composite_softor, co
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='TrainSketch')
     parser.add_argument('-c', '--checkpoint')
+    parser.add_argument('-o', '--output', type=str, default="output")
 
     parser.add_argument('--num_workers', type=int, default=4)
 
@@ -20,6 +21,10 @@ if __name__ == '__main__':
                         help='Height and width')
     parser.add_argument('--hidden_dims', type=int, nargs=2, default=[256, 128])
     parser.add_argument('--colour', action=argparse.BooleanOptionalAction)
+
+    parser.add_argument('--perceptual', action=argparse.BooleanOptionalAction)
+    parser.add_argument('-l', '--loss_power', type=float, default=1.0)
+    parser.add_argument('-t', '--max_thickness', type=float, default=1.0)
 
     parser.add_argument('-b', '--batch_size', type=int, default=1,
                         help='Number of canvases painted at once')

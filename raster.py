@@ -28,6 +28,13 @@ class DistanceRasterStraightThrough(torch.autograd.Function):
         return grad_output * grad_d, grad_output * grad_thickness
 
 
+def get_thickness_px_range(a, b, dim, device):
+    maxdim = max(dim[0], dim[1])
+    left = torch.tensor(max(1.0, maxdim * a), device=device)
+    right = torch.tensor(maxdim * b, device=device)
+    return left, right
+
+
 class SegmentRasteriser(torch.nn.Module):
     def __init__(self, dims, thickness_range=(0.0, 1.0), straight_through=False):
         super().__init__()
@@ -51,10 +58,7 @@ class SegmentRasteriser(torch.nn.Module):
     def forward(self, x: torch.Tensor):
         start = x[:, :, :2] * self.dims.view(1, 1, 2)
         end = x[:, :, 2:4] * self.dims.view(1, 1, 2)
-        thickness = torch.lerp(
-            torch.tensor(max(1.0, self.thickness_range[1]), device=x.device),
-            torch.max(self.dims).float() * self.thickness_range[1],
-            x[:, :, [4]])
+        thickness = torch.lerp(*get_thickness_px_range(*self.thickness_range, self.dims, x.device), x[:, :, [4]])
         colour = x[:, :, 5:]
 
         start = start.view(*start.shape, 1, 1)
