@@ -16,7 +16,7 @@ class DistanceRasterStraightThrough(torch.autograd.Function):
         thickness = thickness.detach().requires_grad_()
 
         # mult
-        # thickness = thickness * 2
+        # thickness = thickness * 0.7
 
         sigma = 0.54925 * thickness
         denum = sigma * sigma + torch.finfo().eps
@@ -30,17 +30,20 @@ class DistanceRasterStraightThrough(torch.autograd.Function):
 
 def get_thickness_px_range(a, b, dim, device):
     maxdim = max(dim[0], dim[1])
-    left = torch.tensor(max(1.0, maxdim * a), device=device)
-    right = torch.tensor(maxdim * b, device=device)
+    left = torch.tensor(max(2.0, maxdim * a), device=device)
+    right = torch.tensor(max(2.0, maxdim * b), device=device)
     return left, right
 
 
 class SegmentRasteriser(torch.nn.Module):
-    def __init__(self, dims, thickness_range=(0.0, 1.0), straight_through=False):
+    def __init__(self, dims, thickness_range=(0.0, 1.0), straight_through=False, pos_mode=0):
         super().__init__()
 
         self.dims = torch.tensor(dims)
         self.thickness_range = thickness_range
+        # 0 - start / end
+        # 1 - start / center
+        self.pos_mode = pos_mode
 
         self.pos = torch.stack(torch.meshgrid(torch.arange(dims[0]), torch.arange(dims[1]), indexing='ij'))
         self.pos = self.pos.view(1, *self.pos.shape)
@@ -56,8 +59,12 @@ class SegmentRasteriser(torch.nn.Module):
         return retval
 
     def forward(self, x: torch.Tensor):
-        start = x[:, :, :2] * self.dims.view(1, 1, 2)
-        end = x[:, :, 2:4] * self.dims.view(1, 1, 2)
+        if self.pos_mode == 0:
+            start = x[:, :, :2] * self.dims.view(1, 1, 2)
+            end = x[:, :, 2:4] * self.dims.view(1, 1, 2)
+        elif self.pos_mode == 1:
+            start = x[:, :, :2] * self.dims.view(1, 1, 2)
+            end = (x[:, :, 2:4] * 2 - x[:, :, :2]) * self.dims.view(1, 1, 2)
         thickness = torch.lerp(*get_thickness_px_range(*self.thickness_range, self.dims, x.device), x[:, :, [4]])
         colour = x[:, :, 5:]
 

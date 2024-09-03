@@ -1,6 +1,5 @@
 import argparse
 import os.path
-from typing import Callable
 
 import torch
 from torch.utils.data import DataLoader
@@ -9,6 +8,7 @@ import lpips
 
 from data import ReconDataset, generate_canvases
 from raster import SegmentRasteriser, composite_over_alpha, composite_softor, composite_over, get_thickness_px_range
+from loss import LPLoss, SinkhornLoss
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='TrainSketch')
@@ -17,16 +17,17 @@ if __name__ == '__main__':
 
     parser.add_argument('--num_workers', type=int, default=4)
 
-    parser.add_argument('-d', '--img_dims', type=int, nargs=2, default=[256, 256],
+    parser.add_argument('-d', '--img_dims', type=int, nargs=2, default=[512, 512],
                         help='Height and width')
-    parser.add_argument('--hidden_dims', type=int, nargs=2, default=[256, 128])
     parser.add_argument('--colour', action=argparse.BooleanOptionalAction)
 
     parser.add_argument('--init_length', type=float, default=0.2)
+    parser.add_argument('--init_width', type=float, default=1.0)
     parser.add_argument('--straight_through', action=argparse.BooleanOptionalAction)
     parser.add_argument('--perceptual', action=argparse.BooleanOptionalAction)
     parser.add_argument('-l', '--loss_power', type=float, default=1.0)
     parser.add_argument('-t', '--max_thickness', type=float, default=0.2)
+    parser.add_argument('--diff_loss', action=argparse.BooleanOptionalAction)
 
     parser.add_argument('-b', '--batch_size', type=int, default=100,
                         help='Number of canvases painted at once')
@@ -49,7 +50,7 @@ if __name__ == '__main__':
     ################################################################################
     # Prepare Dataset
 
-    dataset = ReconDataset(args.img_dims)
+    dataset = ReconDataset(args.img_dims, src="imagenet")
     dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True)
 
     ################################################################################
@@ -57,13 +58,13 @@ if __name__ == '__main__':
 
     device = 'cuda'
 
-    rasteriser = SegmentRasteriser(args.img_dims, (0.0, args.max_thickness), args.straight_through).to(device)
+    rasteriser = SegmentRasteriser(args.img_dims, (0.0, args.max_thickness), args.straight_through, 0).to(device)
     compositor = composite_over_alpha
-    loss_fn = lpips.LPIPS() if args.perceptual else lambda x, x_target: torch.norm((x - x_target).flatten(1),
-                                                                                   p=args.loss_power,
-                                                                                   dim=1).sum() / torch.numel(x)
+    loss_fn = lpips.LPIPS() if args.perceptual else LPLoss(args.loss_power)
     error_fn = torch.nn.MSELoss()
     optimse_fn = torch.nn.MSELoss()
+
+    mm_clip = lambda x, l, u: max(l, min(u, x))
 
     ################################################################################
     # Training
@@ -82,6 +83,15 @@ if __name__ == '__main__':
         if i == args.epochs:
             break
 
+        for i,img in enumerate(target_imgs):
+            img = torchvision.transforms.ToPILImage()(img)
+            img.save(os.path.join("outputs_old/testdata", f"{i}.png"), format=None)
+    quit()
+
+    for i, target_imgs in enumerate(dataloader):
+        if i == args.epochs:
+            break
+
         target_imgs = target_imgs.to(device)
         canvases = torch.ones([args.batch_size, n_channels, *args.img_dims], device=device)
 
@@ -94,9 +104,13 @@ if __name__ == '__main__':
         for u in pbar:
             canvases = canvases.detach()
 
+            diff = torch.norm(canvases - target_imgs, dim=1)
+            normalized_diff = diff / torch.amax(diff.flatten(1), dim=1).view(args.batch_size, 1, 1)
+
             prims = torch.rand([args.batch_size, args.prims, 5], device=device)
             centres = (prims[:, :, :2] + prims[:, :, 2:4]).repeat(1, 1, 2) * 0.5
             prims[:, :, :4] = centres + (prims[:, :, :4] - centres) * args.init_length
+            prims[:, :, 4] *= args.init_width
             prims.requires_grad_(True)
 
             colours = torch.rand([args.batch_size, args.prims, n_channels], device=device)
@@ -106,25 +120,46 @@ if __name__ == '__main__':
 
             for j in range(100):
                 prims.data.clamp_(0, 1)
+                # prims.data[:, :, 4].clamp_(0, (0.1 + progress * 0.9) * args.max_thickness)
                 prims.grad = None
+                if j == 10:
+                    centres = (prims[:, :, :2] + prims[:, :, 2:4]).repeat(1, 1, 2) * 0.5
+                    prims.data[:, :, :4] = centres + (prims[:, :, :4] - centres) * args.init_length
+                    prims.data[:, :, 4] *= args.init_width
                 optimizer.zero_grad()
+
+                layers = rasteriser(torch.cat([prims, torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
+
+                if j == 10:
+                    colours.data = torch.sum(layers * target_imgs.unsqueeze(1), dim=(3, 4)) / layers.sum(dim=(3, 4))
                 colours.data.clamp_(0, 1)
                 colours.grad = None
 
-                layers = rasteriser(torch.cat([prims, torch.ones([*prims.shape[:2], 1], device=device)], dim=2))
-                layers = torch.cat([colours.view(*colours.shape[:2], n_channels, 1, 1)
-                                   .expand(*colours.shape[:2], n_channels, *layers.shape[-2:]),
-                                    layers], dim=2)
-                layers = torch.cat([layers,
-                                    torch.cat([canvases, one_alphas], dim=1).view(
-                                        [args.batch_size, 1, n_channels + 1, *args.img_dims])],
-                                   dim=1)
+                colour_layers = torch.cat([colours.view(*colours.shape[:2], n_channels, 1, 1)
+                                          .expand(*colours.shape[:2], n_channels, *layers.shape[-2:]),
+                                           layers], dim=2)
+                colour_layers = torch.cat([colour_layers,
+                                           torch.cat([canvases, one_alphas], dim=1).view(
+                                               [args.batch_size, 1, n_channels + 1, *args.img_dims])],
+                                          dim=1)
 
-                new_canvases = compositor(layers)
+                new_canvases = compositor(colour_layers)
+                if torch.any(torch.isnan(new_canvases)):
+                    raise RuntimeError("OOF!")
 
-                loss = loss_fn(new_canvases, target_imgs) * args.batch_size
+                if j < 10:
+                    normalized_layers = layers.squeeze() / torch.amax(layers.flatten(1), dim=1).view(args.batch_size, 1,
+                                                                                                     1)
+                    loss = SinkhornLoss()(normalized_layers.unsqueeze(1), normalized_diff.unsqueeze(1)) * 10
+                else:
+                    loss = loss_fn(new_canvases, target_imgs)
+                    if args.diff_loss:
+                        loss = loss - (normalized_diff * layers).sum(dim=(2, 3)).mean()
                 loss.backward()
                 optimizer.step()
+
+                # if j > 90:
+                #     prims = prims_clone
 
                 if (u % (args.updates // 10) == 0 or u == args.updates - 1) and (j % 10 == 0 or j == 99):
                     img = torchvision.transforms.ToPILImage()(new_canvases[0])
@@ -134,13 +169,14 @@ if __name__ == '__main__':
 
             with torch.no_grad():
                 error = error_fn(canvases, target_imgs)
-                rel_error = (torch.stack([error_fn(canvases[i], target_imgs[i]) for i in range(args.batch_size)]) / initial_error).mean()
+                rel_error = (torch.stack(
+                    [error_fn(canvases[i], target_imgs[i]) for i in range(args.batch_size)]) / initial_error).mean()
 
             pbar.set_postfix({"error": error.cpu().detach().item(), "rel_error": rel_error.cpu().detach().item()})
 
             error_curve[i, u, 0] = error
-            error_curve[i, u, 0] = rel_error
+            error_curve[i, u, 1] = rel_error
 
     torch.save({
         'error_curve': error_curve
-    }, os.path.join(args.output, f"err_curve.pt"))
+    }, os.path.join(args.output, "err_curve.pt"))

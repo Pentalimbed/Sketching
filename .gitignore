@@ -163,3 +163,5 @@ cython_debug/
 dataset/
 outputs/
 outputs_old/
+extern/
+viz/
