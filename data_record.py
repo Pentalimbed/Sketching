@@ -83,15 +83,6 @@ if __name__ == '__main__':
         if i == args.epochs:
             break
 
-        for i,img in enumerate(target_imgs):
-            img = torchvision.transforms.ToPILImage()(img)
-            img.save(os.path.join("outputs_old/testdata", f"{i}.png"), format=None)
-    quit()
-
-    for i, target_imgs in enumerate(dataloader):
-        if i == args.epochs:
-            break
-
         target_imgs = target_imgs.to(device)
         canvases = torch.ones([args.batch_size, n_channels, *args.img_dims], device=device)
 

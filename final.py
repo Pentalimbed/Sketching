@@ -9,7 +9,7 @@ import lpips
 
 from data import ReconDataset, ImageFolderCustom
 from raster import SegmentRasteriser, composite_over_alpha, get_thickness_px_range
-from loss import  LPLoss
+from loss import LPLoss
 
 
 def remap(value, from_range, to_range):

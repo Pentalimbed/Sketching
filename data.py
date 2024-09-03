@@ -62,7 +62,9 @@ class ImageFolderCustom(Dataset):
         self.image_paths = os.listdir(img_dir)
         self.transform = transform
     def __getitem__(self, index):
-        x = torchvision.io.read_image(os.path.join(self.img_dir, self.image_paths[index]))
+        x = torchvision.io.read_image(os.path.join(self.img_dir, self.image_paths[index]),
+                                      torchvision.io.ImageReadMode.RGB)
+        x = x / 255.
         if self.transform is not None:
             x = self.transform(x)
         return x
